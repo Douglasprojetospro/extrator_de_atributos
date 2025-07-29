@@ -4,18 +4,36 @@ from io import BytesIO
 import os
 from werkzeug.utils import secure_filename
 import threading
+import atexit
+import shutil
 
 # Configurações iniciais
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1GB
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['SECRET_KEY'] = 'sua_chave_secreta_aqui'  # Altere para uma chave segura
+app.config['SECRET_KEY'] = os.urandom(24)  # Chave secreta mais segura
+app.config['ALLOWED_EXTENSIONS'] = {'xlsx', 'xls'}
 
 # Garante que a pasta de uploads exista
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Variável global para progresso
+# Variáveis globais com thread-safe
 progresso = 0
+progresso_lock = threading.Lock()
+processo_em_andamento = False
+
+# Limpeza ao sair
+def cleanup():
+    try:
+        shutil.rmtree(app.config['UPLOAD_FOLDER'])
+    except:
+        pass
+
+atexit.register(cleanup)
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def extrair_atributos(df_dados, df_config):
     global progresso
@@ -23,24 +41,27 @@ def extrair_atributos(df_dados, df_config):
     regras = {}
     total_atributos = len(df_config['Atributo'].unique())
     
+    # Pré-processamento das regras
     for _, row in df_config.iterrows():
         atributo = row['Atributo']
-        valor = row['Valor']
-        padroes = [p.strip() for p in str(row['Padrões']).split(',') if p.strip()]
+        valor = str(row['Valor'])
+        padroes = [p.strip().lower() for p in str(row['Padrões']).split(',') if p.strip()]
         
         if atributo not in regras:
             regras[atributo] = []
         regras[atributo].append({'valor': valor, 'padroes': padroes})
     
+    # Aplicação das regras com progresso
     for i, (atributo, regras_atributo) in enumerate(regras.items()):
-        def aplicar_regras_row(desc):
-            return aplicar_regras(desc, regras_atributo)
-            
-        resultado[atributo] = resultado['Descrição'].apply(aplicar_regras_row)
+        resultado[atributo] = resultado['Descrição'].apply(
+            lambda desc: aplicar_regras(desc, regras_atributo)
         
-        progresso = int(((i + 1) / total_atributos) * 100)
+        with progresso_lock:
+            progresso = int(((i + 1) / total_atributos) * 100)
     
-    progresso = 100
+    with progresso_lock:
+        progresso = 100
+    
     return resultado
 
 def aplicar_regras(texto, regras):
@@ -50,7 +71,7 @@ def aplicar_regras(texto, regras):
     texto = texto.lower()
     for regra in regras:
         for padrao in regra['padroes']:
-            if padrao.lower() in texto:
+            if padrao in texto:
                 return regra['valor']
     return None
 
@@ -60,10 +81,14 @@ def index():
 
 @app.route('/processar', methods=['POST'])
 def processar():
-    global progresso
+    global progresso, processo_em_andamento
     
     try:
-        progresso = 0
+        with progresso_lock:
+            if processo_em_andamento:
+                return jsonify({"erro": "Já existe um processamento em andamento"}), 429
+            processo_em_andamento = True
+            progresso = 0
         
         if 'arquivo_dados' not in request.files or 'arquivo_config' not in request.files:
             return jsonify({"erro": "Envie ambos arquivos"}), 400
@@ -74,54 +99,107 @@ def processar():
         if arquivo_dados.filename == '' or arquivo_config.filename == '':
             return jsonify({"erro": "Selecione arquivos válidos"}), 400
         
-        dados_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(arquivo_dados.filename))
-        config_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(arquivo_config.filename))
+        if not (allowed_file(arquivo_dados.filename) and allowed_file(arquivo_config.filename)):
+            return jsonify({"erro": "Apenas arquivos Excel são permitidos"}), 400
+        
+        # Criar subpasta para esta sessão
+        session_id = secure_filename(str(threading.get_ident()))
+        session_folder = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
+        os.makedirs(session_folder, exist_ok=True)
+        
+        dados_path = os.path.join(session_folder, secure_filename(arquivo_dados.filename))
+        config_path = os.path.join(session_folder, secure_filename(arquivo_config.filename))
+        resultado_path = os.path.join(session_folder, 'resultado.xlsx')
         
         arquivo_dados.save(dados_path)
         arquivo_config.save(config_path)
         
         def processar_thread():
-            global progresso
+            global progresso, processo_em_andamento
             try:
-                df_dados = pd.read_excel(dados_path)
-                df_config = pd.read_excel(config_path)
+                # Ler arquivos com tratamento de erro
+                try:
+                    df_dados = pd.read_excel(dados_path)
+                    df_config = pd.read_excel(config_path)
+                except Exception as e:
+                    with progresso_lock:
+                        progresso = -1  # Indica erro
+                    return
                 
+                # Verificar colunas necessárias
                 if 'Descrição' not in df_dados.columns:
+                    with progresso_lock:
+                        progresso = -2  # Erro de coluna faltante
                     return
                     
                 required_cols = ['Atributo', 'Valor', 'Padrões']
                 if not all(col in df_config.columns for col in required_cols):
+                    with progresso_lock:
+                        progresso = -3  # Erro de configuração
                     return
                 
+                # Processamento principal
                 resultado = extrair_atributos(df_dados, df_config)
-                resultado_path = os.path.join(app.config['UPLOAD_FOLDER'], 'resultado.xlsx')
+                
+                # Salvar resultado
                 resultado.to_excel(resultado_path, index=False)
                 
             except Exception as e:
                 print(f"Erro no processamento: {str(e)}")
+                with progresso_lock:
+                    progresso = -4  # Erro genérico
+            finally:
+                with progresso_lock:
+                    processo_em_andamento = False
         
         threading.Thread(target=processar_thread).start()
         
-        return jsonify({"mensagem": "Processamento iniciado"})
+        return jsonify({
+            "mensagem": "Processamento iniciado",
+            "session_id": session_id
+        })
         
     except Exception as e:
+        with progresso_lock:
+            processo_em_andamento = False
         return jsonify({"erro": str(e)}), 500
 
 @app.route('/progresso')
 def obter_progresso():
-    return jsonify({"progresso": progresso})
+    with progresso_lock:
+        return jsonify({
+            "progresso": progresso,
+            "status": "processando" if progresso < 100 and progresso >= 0 else "erro",
+            "mensagem_erro": get_error_message(progresso)
+        })
 
-@app.route('/download_resultado')
-def download_resultado():
-    resultado_path = os.path.join(app.config['UPLOAD_FOLDER'], 'resultado.xlsx')
-    if os.path.exists(resultado_path):
+def get_error_message(error_code):
+    errors = {
+        -1: "Erro ao ler arquivos Excel",
+        -2: "Coluna 'Descrição' não encontrada no arquivo de dados",
+        -3: "Colunas obrigatórias não encontradas no arquivo de configuração",
+        -4: "Erro durante o processamento"
+    }
+    return errors.get(error_code, "")
+
+@app.route('/download_resultado/<session_id>')
+def download_resultado(session_id):
+    session_id = secure_filename(session_id)
+    resultado_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'resultado.xlsx')
+    
+    if not os.path.exists(resultado_path):
+        return jsonify({"erro": "Arquivo não disponível"}), 404
+    
+    try:
         return send_file(
             resultado_path,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name='resultados_processados.xlsx'
         )
-    return jsonify({"erro": "Arquivo não disponível"}), 404
+    finally:
+        # Limpar arquivos após download
+        shutil.rmtree(os.path.join(app.config['UPLOAD_FOLDER'], session_id), ignore_errors=True)
 
 @app.route('/download_modelo_produtos')
 def download_modelo_produtos():
@@ -180,4 +258,4 @@ def download_modelo_config():
     )
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, threaded=True)
