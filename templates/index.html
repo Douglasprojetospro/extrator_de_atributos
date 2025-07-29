@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extrator de Atributos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 2rem;
+        }
+        .container {
+            max-width: 1200px;
+        }
+        .card {
+            margin-bottom: 2rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+        .card-header {
+            background-color: #0d6efd;
+            color: white;
+            font-weight: 600;
+            border-radius: 0.5rem 0.5rem 0 0 !important;
+        }
+        .progress {
+            height: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .btn-download {
+            margin-bottom: 0.5rem;
+        }
+        .example-table {
+            margin-top: 1.5rem;
+            background-color: white;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .example-table th {
+            background-color: #f1f1f1;
+        }
+        #errorAlert {
+            margin-top: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="text-center mb-5">
+            <h1 class="display-5 fw-bold">🔍 Extrator de Atributos</h1>
+            <p class="lead">Extraia informações de produtos automaticamente</p>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header py-3">
+                        <h5 class="mb-0">📥 Baixar Modelos</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <a href="/download_modelo_produtos" class="btn btn-primary btn-download py-2">
+                                <i class="bi bi-file-earmark-spreadsheet"></i> Modelo de Produtos
+                            </a>
+                            <a href="/download_modelo_config" class="btn btn-secondary btn-download py-2">
+                                <i class="bi bi-gear"></i> Modelo de Configuração
+                            </a>
+                        </div>
+
+                        <div class="example-table">
+                            <table class="table table-bordered table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Atributo</th>
+                                        <th>Valor</th>
+                                        <th>Padrões (separados por vírgula)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Voltagem</td>
+                                        <td>110V</td>
+                                        <td>110, 110v, 110 volts</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Cor</td>
+                                        <td>Branco</td>
+                                        <td>branco, white, branca</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header py-3">
+                        <h5 class="mb-0">🔄 Processar Arquivos</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="uploadForm" enctype="multipart/form-data">
+                            <div class="mb-3">
+                                <label for="arquivo_dados" class="form-label">Planilha de Produtos</label>
+                                <input class="form-control" type="file" name="arquivo_dados" id="arquivo_dados" accept=".xlsx" required>
+                                <div class="form-text">Deve conter coluna "Descrição"</div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="arquivo_config" class="form-label">Planilha de Configuração</label>
+                                <input class="form-control" type="file" name="arquivo_config" id="arquivo_config" accept=".xlsx" required>
+                                <div class="form-text">Com atributos e padrões a serem extraídos</div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success w-100 py-2">
+                                <i class="bi bi-gear"></i> Processar Arquivos
+                            </button>
+                        </form>
+                        
+                        <div id="progressContainer" class="mt-4" style="display: none;">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Progresso:</span>
+                                <span id="progressText">0%</span>
+                            </div>
+                            <div class="progress">
+                                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        
+                        <div id="downloadContainer" class="mt-3" style="display: none;">
+                            <a id="downloadLink" href="#" class="btn btn-primary w-100 py-2">
+                                <i class="bi bi-download"></i> Baixar Resultados
+                            </a>
+                        </div>
+                        
+                        <div id="errorAlert" class="alert alert-danger mt-3" role="alert" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Reset UI
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('downloadContainer').style.display = 'none';
+            document.getElementById('errorAlert').style.display = 'none';
+            
+            const formData = new FormData(this);
+            
+            fetch('/processar', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.erro) {
+                    throw new Error(data.erro);
+                }
+                
+                const progressInterval = setInterval(() => {
+                    fetch('/progresso')
+                        .then(res => res.json())
+                        .then(data => {
+                            const progress = data.progresso;
+                            document.getElementById('progressBar').style.width = `${progress}%`;
+                            document.getElementById('progressText').textContent = `${progress}%`;
+                            
+                            if (progress >= 100) {
+                                clearInterval(progressInterval);
+                                document.getElementById('downloadLink').href = '/download_resultado';
+                                document.getElementById('downloadContainer').style.display = 'block';
+                            }
+                        });
+                }, 500);
+            })
+            .catch(error => {
+                document.getElementById('errorAlert').textContent = error.message;
+                document.getElementById('errorAlert').style.display = 'block';
+                document.getElementById('progressContainer').style.display = 'none';
+            });
+        });
+    </script>
+</body>
+</html>
