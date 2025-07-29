@@ -1,15 +1,10 @@
-# Dependências principais (usando wheels pré-compilados)
+# Dependências principais (binários pré-compilados)
 --only-binary :all:
 Flask==3.0.2
 pandas==2.1.3
 openpyxl==3.1.2
 gunicorn==21.2.0
 
-# Dependências implícitas (fixar versões para evitar conflitos)
+# Dependências de sistema (sem necessidade de compilação)
 numpy==1.26.3
-python-dateutil==2.8.2
-pytz==2023.3.post1
 Werkzeug==3.0.1
-
-# Otimização para Render.com
-psycopg2-binary==2.9.9  # Caso use PostgreSQL
