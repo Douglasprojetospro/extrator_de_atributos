@@ -1,20 +1,15 @@
-# Dependências principais
+# Dependências principais (usando wheels pré-compilados)
+--only-binary :all:
 Flask==3.0.2
 pandas==2.1.3
-openpyxl==3.1.2  # Necessário para leitura/escrita de Excel
-XlsxWriter==3.1.9  # Alternativa para exportação Excel
-werkzeug==3.0.1  # Já vem com Flask, mas especificamos versão
+openpyxl==3.1.2
+gunicorn==21.2.0
 
-# Dependências para produção
-gunicorn==21.2.0  # Servidor WSGI para deploy
-python-dotenv==1.0.0  # Para gerenciamento de variáveis de ambiente
+# Dependências implícitas (fixar versões para evitar conflitos)
+numpy==1.26.3
+python-dateutil==2.8.2
+pytz==2023.3.post1
+Werkzeug==3.0.1
 
-# Dependências de desenvolvimento (opcional)
-pytest==8.0.0  # Para testes
-pytest-cov==4.1.0  # Cobertura de testes
-faker==19.13.0  # Para gerar dados de teste
-
-# Otimizações (opcional)
-numpy==1.26.3  # Já vem com pandas, mas fixamos versão
-python-dateutil==2.8.2  # Para manipulação de datas
-pytz==2023.3.post1  # Para timezones
+# Otimização para Render.com
+psycopg2-binary==2.9.9  # Caso use PostgreSQL
